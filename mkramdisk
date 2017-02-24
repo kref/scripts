@@ -1,0 +1,170 @@
+#! /usr/bin/env bash
+
+MODEL="ds3615"
+VER="6.02"
+MV=${MODEL}_${VER}
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}"  )" && pwd  )"
+ROOT=$(dirname ${SCRIPT_DIR})
+OUTDIR=$ROOT/build/$MV
+PREFIX_PATH=$ROOT/install/$MV
+SRCDIR=$ROOT/linux-stable
+
+# up to date
+UPDATE_MOD_PATH=$ROOT/prebuilt/$MV/modules
+UPDATE_FW_PATH=$ROOT/prebuilt/$MV/firmware
+# synology pat
+RELEASE_MOD_PATH=$ROOT/rootfs/$MV/lib/modules
+RELEASE_FW_PATH=$ROOT/rootfs/$MV/lib/firmware
+# synology rd.gz
+RAMDISK_MOD_PATH=$ROOT/ramdisk/$MV/lib/modules
+RAMDISK_FW_PATH=$ROOT/ramdisk/$MV/lib/firmware
+# built with beta source
+BETA_MOD_PATH=$ROOT/install/$MV/lib/modules
+BETA_FW_PATH=$ROOT/install/$MV/lib/firmware
+
+TOOL_PATH=$ROOT/tool
+TOOLCHAIN=$ROOT/toolchain/$MV
+[ -e $OUTDIR/.config ] || cat  $SRCDIR/synoconfigs/bromolow config.override > $OUTDIR/.config
+export CROSS_COMPILE=${TOOLCHAIN}/x86_64-pc-linux-gnu-
+cat config.override >> $OUTDIR/.config
+
+if [ "x$1" = "xmenuconfig" ]; then
+	make -C $SRCDIR O=$OUTDIR menuconfig
+	exit 0
+fi
+
+if [ "x$1" = "xsavedefconfig" ]; then
+	make -C $SRCDIR O=$OUTDIR savedefconfig
+	cp $OUTDIR/defconfig .
+	exit 0
+fi
+
+make -C $SRCDIR O=$OUTDIR oldconfig
+
+if [ "x$1" = "xpass" ]; then
+	shift
+	make -C $SRCDIR O=$OUTDIR $@
+	exit 0
+fi
+
+if [ "x$1" = "xsymbol" ]; then
+	make -C $SRCDIR O=$OUTDIR -j5 bzImage EXTRA_CFLAGS=-g
+	exit 0
+fi
+
+if [ "x$1" = "xkernel"  -o "x$1" = "xall" ]; then
+	make -C $SRCDIR O=$OUTDIR -j5 bzImage
+	exit 0
+fi
+
+mkdir -p tmp/usr/sbin
+mkdir -p out/
+
+InstallFirmware()
+{
+	local fw="$1"
+	local fwbase=$(basename $fw)
+	local update=$(find $UPDATE_FW_PATH -name $fwbase -type f | fgrep "$fw")
+	local release=$(find $RELEASE_FW_PATH -name $fwbase -type f | fgrep "$fw")
+	local ramdisk=$(find $RAMDISK_FW_PATH -name $fwbase -type f | fgrep "$fw")
+	local beta=$(find $BETA_FW_PATH -name $fwbase -type f | fgrep "$fw")
+	local src=""
+	[ -z "$src" -a -n "$update" ] && src="$update"
+	[ -z "$src" -a -n "$release" -a -z "$ramdisk" ] && src="$release";
+	[ -z "$src" -a -n "$ramdisk" ] && src="nop";
+	[ -z "$src" -a -n "$beta" ] && src="$beta";
+	[ -z "$src" ] && echo "$fw not found any where"
+	if [ -n "$src" -a "x$src" != "xnop" ]; then
+		install -DTm 0755 "$src" "extras/usr/lib/firmware/$fw"
+	else
+		return 1
+	fi
+}
+
+InstallModule()
+{
+	local mod="$1"
+	local update=$(find $UPDATE_MOD_PATH -name  ${mod}.ko)
+	local release=$(find $RELEASE_MOD_PATH -name  ${mod}.ko)
+	local ramdisk=$(find $RAMDISK_MOD_PATH -name  ${mod}.ko)
+	local beta=$(find $BETA_MOD_PATH -name  ${mod}.ko)
+	local src=""
+	[ -z "$src" -a -n "$update" ] && src="$update"
+	[ -z "$src" -a -n "$release" -a -z "$ramdisk" ] && src="$release";
+	[ -z "$src" -a -n "$ramdisk" ] && src="nop";
+	[ -z "$src" -a -n "$beta" ] && src="$beta";
+	[ -z "$src" ] && echo "$mod not found any where"
+	if [ -n "$src" -a "x$src" != "xnop" ]; then
+		install -DTm 0644 "$src" "extras/usr/lib/modules/${mod}.ko"
+		for fw in $(modinfo $src |grep ^firmware | cut -d: -f2); do
+			if InstallFirmware $fw; then
+				[ -n  "$firmwares" ] && firmwares="$firmwares "
+				firmwares="$firmwares$fw"
+			fi
+		done
+	fi
+}
+
+selfcheck=`ls -r $RELEASE_MOD_PATH/../../../usr/syno/selfcheck/dsm.full.*.list`
+
+RestoreModule()
+{
+	local mod="$1"
+	local src="$RELEASE_MOD_PATH/${mod}.ko"
+	[ -f "$src" ] || (echo "source not exist" && return 1)
+	install -DTm 0644 "$src" "extras/usr/lib/modules/origin/${mod}.ko"
+	grep -m1 "^/usr/lib/modules/${mod}.ko\>" $selfcheck > "extras/usr/lib/modules/${mod}.ko.list"
+}
+
+if [ "x$1" = "xmodule" -o "x$1" = "xall" -o "x$1" = "x" ]; then
+	make -C $SRCDIR O=$OUTDIR -j5 modules
+	make -C $SRCDIR INSTALL_MOD_PATH=$PREFIX_PATH O=$OUTDIR -j5 modules_install
+	make -C $SRCDIR INSTALL_MOD_PATH=$PREFIX_PATH O=$OUTDIR -j5 firmware_install
+
+	firmwares=""
+
+	. modules.conf
+
+	#disk modules are loaded early
+	for mod in $DISK_MODULES $EXTRA_MODULES $OPTIONAL_MODULES; do
+		InstallModule $mod
+	done
+
+	mkdir -p extras/etc
+	echo 'EXTRA_MODULES="'$EXTRA_MODULES'"' > extras/etc/rc.modules
+	echo 'DISK_MODULES="'$DISK_MODULES'"' >> extras/etc/rc.modules
+	echo 'EXTRA_FIRMWARES="'$firmwares'"' >> extras/etc/rc.modules
+
+	for mod in $RESTORE_MODULES; do
+		RestoreModule $mod
+	done
+fi
+
+if [ "x$1" = "xtool" -o "x$1" = "xall" -o "x$1" = "x" ]; then
+	make -C $SRCDIR O=$OUTDIR M=$TOOL_PATH
+	make -C $TOOL_PATH
+	cp -a $TOOL_PATH/modprobe  tmp/usr/sbin/
+fi
+
+if [ "x$1" = "xoverlay" ]; then
+	cp origin/vmlinux.bin ${OUTDIR}/arch/x86/boot/compressed/vmlinux.bin
+	. genzImage
+	exit 0
+fi
+
+cp origin/rd.lzma out/ramdisk.lzma
+pushd tmp
+(find . -executable && find . \! -executable) | cpio --owner root:root -oH newc | lzma -9 > ../out/jun.lzma
+popd
+
+pushd rootfs
+git diff --name-only baseline . | sed -e 's/^rootfs\///'|cpio --owner root:root -oH newc | lzma -9 >> ../out/jun.lzma
+popd
+
+cat out/jun.lzma >> out/ramdisk.lzma
+
+if [ -d extras ]; then
+pushd extras
+find . | cpio --owner root:root -oH newc | lzma -9 > ../out/extra.lzma
+popd
+fi
