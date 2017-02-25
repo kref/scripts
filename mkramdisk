@@ -1,17 +1,25 @@
 #! /usr/bin/env bash
 
 MODEL="ds3615"
-VER="6.02"
+VER="6.1"
 MV=${MODEL}_${VER}
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}"  )" && pwd  )"
 ROOT=$(dirname ${SCRIPT_DIR})
 OUTDIR=$ROOT/build/$MV
 PREFIX_PATH=$ROOT/install/$MV
-SRCDIR=$ROOT/linux-stable
+SRCDIR=$ROOT/linux
+WORKDIR=$ROOT/$MV
+NEWRD=$WORKDIR/ramdisk
+
+
+mkdir -p $OUTDIR
+mkdir -p $PREFIX_PATH
+mkdir -p $WORKDIR
+mkdir -p $NEWRD
 
 # up to date
-UPDATE_MOD_PATH=$ROOT/prebuilt/$MV/modules
-UPDATE_FW_PATH=$ROOT/prebuilt/$MV/firmware
+UPDATE_MOD_PATH=$ROOT/3rdparty/$MV/modules
+UPDATE_FW_PATH=$ROOT/3rdparty/$MV/firmware
 # synology pat
 RELEASE_MOD_PATH=$ROOT/rootfs/$MV/lib/modules
 RELEASE_FW_PATH=$ROOT/rootfs/$MV/lib/firmware
@@ -23,10 +31,10 @@ BETA_MOD_PATH=$ROOT/install/$MV/lib/modules
 BETA_FW_PATH=$ROOT/install/$MV/lib/firmware
 
 TOOL_PATH=$ROOT/tool
-TOOLCHAIN=$ROOT/toolchain/$MV
-[ -e $OUTDIR/.config ] || cat  $SRCDIR/synoconfigs/bromolow config.override > $OUTDIR/.config
-export CROSS_COMPILE=${TOOLCHAIN}/x86_64-pc-linux-gnu-
-cat config.override >> $OUTDIR/.config
+TOOLCHAIN=$ROOT/toolchain/$MV/x86_64-pc-linux-gnu
+[ -e $OUTDIR/.config ] || cat  $SRCDIR/synoconfigs/bromolow $WORKDIR/config.override > $OUTDIR/.config
+export CROSS_COMPILE=${TOOLCHAIN}/bin/x86_64-pc-linux-gnu-
+cat $WORKDIR/config.override >> $OUTDIR/.config
 
 if [ "x$1" = "xmenuconfig" ]; then
 	make -C $SRCDIR O=$OUTDIR menuconfig
@@ -57,8 +65,9 @@ if [ "x$1" = "xkernel"  -o "x$1" = "xall" ]; then
 	exit 0
 fi
 
-mkdir -p tmp/usr/sbin
-mkdir -p out/
+mkdir -p $NEWRD/usr/sbin
+mkdir -p $NEWRD/usr/bin
+mkdir -p $NEWRD/etc
 
 InstallFirmware()
 {
@@ -75,7 +84,7 @@ InstallFirmware()
 	[ -z "$src" -a -n "$beta" ] && src="$beta";
 	[ -z "$src" ] && echo "$fw not found any where"
 	if [ -n "$src" -a "x$src" != "xnop" ]; then
-		install -DTm 0755 "$src" "extras/usr/lib/firmware/$fw"
+		install -DTm 0755 "$src" "$NEWRD/usr/lib/firmware/$fw"
 	else
 		return 1
 	fi
@@ -95,7 +104,7 @@ InstallModule()
 	[ -z "$src" -a -n "$beta" ] && src="$beta";
 	[ -z "$src" ] && echo "$mod not found any where"
 	if [ -n "$src" -a "x$src" != "xnop" ]; then
-		install -DTm 0644 "$src" "extras/usr/lib/modules/${mod}.ko"
+		install -DTm 0644 "$src" "$NEWRD/usr/lib/modules/${mod}.ko"
 		for fw in $(modinfo $src |grep ^firmware | cut -d: -f2); do
 			if InstallFirmware $fw; then
 				[ -n  "$firmwares" ] && firmwares="$firmwares "
@@ -105,17 +114,6 @@ InstallModule()
 	fi
 }
 
-selfcheck=`ls -r $RELEASE_MOD_PATH/../../../usr/syno/selfcheck/dsm.full.*.list`
-
-RestoreModule()
-{
-	local mod="$1"
-	local src="$RELEASE_MOD_PATH/${mod}.ko"
-	[ -f "$src" ] || (echo "source not exist" && return 1)
-	install -DTm 0644 "$src" "extras/usr/lib/modules/origin/${mod}.ko"
-	grep -m1 "^/usr/lib/modules/${mod}.ko\>" $selfcheck > "extras/usr/lib/modules/${mod}.ko.list"
-}
-
 if [ "x$1" = "xmodule" -o "x$1" = "xall" -o "x$1" = "x" ]; then
 	make -C $SRCDIR O=$OUTDIR -j5 modules
 	make -C $SRCDIR INSTALL_MOD_PATH=$PREFIX_PATH O=$OUTDIR -j5 modules_install
@@ -123,27 +121,22 @@ if [ "x$1" = "xmodule" -o "x$1" = "xall" -o "x$1" = "x" ]; then
 
 	firmwares=""
 
-	. modules.conf
+	source $WORKDIR/modules.conf
 
 	#disk modules are loaded early
 	for mod in $DISK_MODULES $EXTRA_MODULES $OPTIONAL_MODULES; do
 		InstallModule $mod
 	done
 
-	mkdir -p extras/etc
-	echo 'EXTRA_MODULES="'$EXTRA_MODULES'"' > extras/etc/rc.modules
-	echo 'DISK_MODULES="'$DISK_MODULES'"' >> extras/etc/rc.modules
-	echo 'EXTRA_FIRMWARES="'$firmwares'"' >> extras/etc/rc.modules
-
-	for mod in $RESTORE_MODULES; do
-		RestoreModule $mod
-	done
+	echo 'EXTRA_MODULES="'$EXTRA_MODULES'"' > $NEWRD/etc/rc.modules
+	echo 'DISK_MODULES="'$DISK_MODULES'"' >> $NEWRD/etc/rc.modules
+	echo 'EXTRA_FIRMWARES="'$firmwares'"' >> $NEWRD/etc/rc.modules
 fi
 
 if [ "x$1" = "xtool" -o "x$1" = "xall" -o "x$1" = "x" ]; then
-	make -C $SRCDIR O=$OUTDIR M=$TOOL_PATH
+	make -C $SRCDIR O=$OUTDIR M=$TOOL_PATH EXTRA_CFLAGS=-DDDD
 	make -C $TOOL_PATH
-	cp -a $TOOL_PATH/modprobe  tmp/usr/sbin/
+	cp -a $TOOL_PATH/modprobe  $NEWRD/usr/sbin/
 fi
 
 if [ "x$1" = "xoverlay" ]; then
@@ -152,19 +145,10 @@ if [ "x$1" = "xoverlay" ]; then
 	exit 0
 fi
 
-cp origin/rd.lzma out/ramdisk.lzma
-pushd tmp
-(find . -executable && find . \! -executable) | cpio --owner root:root -oH newc | lzma -9 > ../out/jun.lzma
+cp $SCRIPT_DIR/patch $NEWRD/usr/bin/
+cp $SCRIPT_DIR/init $NEWRD/
+git -C $ROOT/ramdisk/$MV diff baseline > $NEWRD/etc/jun.patch
+pushd $NEWRD
+(find . -executable && find . \! -executable) | cpio --owner root:root -oH newc | lzma -9 > $WORKDIR/jun.lzma
 popd
-
-pushd rootfs
-git diff --name-only baseline . | sed -e 's/^rootfs\///'|cpio --owner root:root -oH newc | lzma -9 >> ../out/jun.lzma
-popd
-
-cat out/jun.lzma >> out/ramdisk.lzma
-
-if [ -d extras ]; then
-pushd extras
-find . | cpio --owner root:root -oH newc | lzma -9 > ../out/extra.lzma
-popd
-fi
+sudo $SCRIPT_DIR/mkboot $WORKDIR

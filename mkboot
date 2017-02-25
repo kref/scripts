@@ -1,0 +1,41 @@
+#!/bin/sh
+WORKDIR=$1
+
+fallocate -l 50M $WORKDIR/synoboot.img
+sgdisk -o -n 0:0:+15M -t 1:EF00  -n 0:0:+30M -n 0:0: -t 3:EF02 -c 1:boot -c 2:image -c 3:legacy $WORKDIR/synoboot.img
+
+kpartx -as $WORKDIR/synoboot.img
+
+loopdev=`sudo kpartx -l $WORKDIR/synoboot.img | tr ' ' '\n' | fgrep -m1 /dev/loop `
+
+parts=`kpartx -l $WORKDIR/synoboot.img |cut -d: -f1`
+for part in $parts;do
+	mkfs.vfat "/dev/mapper/$part"
+done
+
+part1=`echo $parts | cut -d\  -f1`
+part2=`echo $parts | cut -d\  -f2`
+mkdir $WORKDIR/bl
+mount -o noexec,nosuid,nodev "/dev/mapper/$part1" $WORKDIR/bl
+grub-install --target=x86_64-efi --efi-directory=$WORKDIR/bl --removable --no-nvram  -s --no-bootsector --boot-directory=$WORKDIR/bl
+grub-install --target=i386-pc -s --boot-directory=$WORKDIR/bl $loopdev
+cp $WORKDIR/grub.cfg $WORKDIR/bl/grub/
+umount $WORKDIR/bl
+rm -rf $WORKDIR/bl
+
+mkdir $WORKDIR/img
+mount -o noexec,nosuid,nodev "/dev/mapper/$part2" $WORKDIR/img
+cp $WORKDIR/rd.gz $WORKDIR/img/rd.gz
+if [ -f $WORKDIR/bzImage ]; then
+	cp $WORKDIR/bzImage $WORKDIR/img/
+fi
+cp $WORKDIR/zImage $WORKDIR/img/
+if [ -f $WORKDIR/jun.lzma ]; then
+	cp $WORKDIR/jun.lzma $WORKDIR/img/extra.lzma
+fi
+if [ -f $WORKDIR/info.txt ]; then
+	cp $WORKDIR/info.txt $WORKDIR/img/
+fi
+umount $WORKDIR/img
+rm -rf $WORKDIR/img
+kpartx -d $WORKDIR/synoboot.img
