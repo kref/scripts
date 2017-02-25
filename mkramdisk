@@ -134,7 +134,7 @@ if [ "x$1" = "xmodule" -o "x$1" = "xall" -o "x$1" = "x" ]; then
 fi
 
 if [ "x$1" = "xtool" -o "x$1" = "xall" -o "x$1" = "x" ]; then
-	make -C $SRCDIR O=$OUTDIR M=$TOOL_PATH EXTRA_CFLAGS=-DDDD
+	make -C $SRCDIR O=$OUTDIR M=$TOOL_PATH
 	make -C $TOOL_PATH
 	cp -a $TOOL_PATH/modprobe  $NEWRD/usr/sbin/
 fi
