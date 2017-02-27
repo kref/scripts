@@ -1,0 +1,29 @@
+#! /usr/bin/env bash
+# $1=model $2=version $3=pat $4=toolchain
+MODEL="$1"
+VER="$2"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}"   )" && pwd   )"
+ROOT=$(dirname ${SCRIPT_DIR})
+MV=${MODEL}_${VER}
+ROOTFS=$ROOT/rootfs/$MV
+RAMDISK=$ROOT/ramdisk/$MV
+PAT=$ROOT/pat/$MV
+WORKDIR=$ROOT/$MV
+TOOLCHAIN=$ROOT/toolchain/$MV
+
+mkdir -p $PAT $ROOTFS $RAMDISK $WORKDIR $TOOLCHAIN
+tar -C $TOOLCHAIN -xf $4
+
+tar -C $PAT -xf  $3
+
+tar -C $ROOTFS -xf $PAT/hda1.tgz
+
+pushd $RAMDISK
+lzcat -S gz $PAT/rd.gz | cpio -i
+git init
+git add -A
+git commit -m "import ramdisk"
+git tag baseline
+popd
+
+$ROOT/linux/scripts/extract-vmlinux $PAT/zImage > $WORKDIR/vmlinux.bin

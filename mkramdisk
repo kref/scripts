@@ -1,7 +1,9 @@
 #! /usr/bin/env bash
-
-MODEL="ds3615"
-VER="6.1"
+# $1=model $2=version $3=config
+MODEL="$1"
+VER="$2"
+CONFIG="$3"
+shift 3
 MV=${MODEL}_${VER}
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}"  )" && pwd  )"
 ROOT=$(dirname ${SCRIPT_DIR})
@@ -17,10 +19,10 @@ mkdir -p $PREFIX_PATH
 mkdir -p $WORKDIR
 mkdir -p $NEWRD
 
-# up to date
+# 3rd party prebuilt modules
 UPDATE_MOD_PATH=$ROOT/3rdparty/$MV/modules
 UPDATE_FW_PATH=$ROOT/3rdparty/$MV/firmware
-# synology pat
+# from synology rootfs
 RELEASE_MOD_PATH=$ROOT/rootfs/$MV/lib/modules
 RELEASE_FW_PATH=$ROOT/rootfs/$MV/lib/firmware
 # synology rd.gz
@@ -32,9 +34,9 @@ BETA_FW_PATH=$ROOT/install/$MV/lib/firmware
 
 TOOL_PATH=$ROOT/tool
 TOOLCHAIN=$ROOT/toolchain/$MV/x86_64-pc-linux-gnu
-[ -e $OUTDIR/.config ] || cat  $SRCDIR/synoconfigs/bromolow $WORKDIR/config.override > $OUTDIR/.config
+cat  $SRCDIR/synoconfigs/$CONFIG $WORKDIR/config.override > $OUTDIR/.config
 export CROSS_COMPILE=${TOOLCHAIN}/bin/x86_64-pc-linux-gnu-
-cat $WORKDIR/config.override >> $OUTDIR/.config
+#cat $WORKDIR/config.override >> $OUTDIR/.config
 
 if [ "x$1" = "xmenuconfig" ]; then
 	make -C $SRCDIR O=$OUTDIR menuconfig
@@ -140,15 +142,15 @@ if [ "x$1" = "xtool" -o "x$1" = "xall" -o "x$1" = "x" ]; then
 fi
 
 if [ "x$1" = "xoverlay" ]; then
-	cp origin/vmlinux.bin ${OUTDIR}/arch/x86/boot/compressed/vmlinux.bin
-	. genzImage
+	cp $WORKDIR/vmlinux.bin ${OUTDIR}/arch/x86/boot/compressed/vmlinux.bin
+	$SCRIPT_DIR/genzImage
 	exit 0
 fi
 
 cp $SCRIPT_DIR/patch $NEWRD/usr/bin/
 cp $SCRIPT_DIR/init $NEWRD/
 git -C $ROOT/ramdisk/$MV diff baseline > $NEWRD/etc/jun.patch
+#single core machine may suffer a text busy issue due to fd lazy close during initramfs populating
 pushd $NEWRD
-(find . -executable && find . \! -executable) | cpio --owner root:root -oH newc | lzma -9 > $WORKDIR/jun.lzma
+(find . -name modprobe && find . \! -name modprobe) | cpio --owner root:root -oH newc | lzma -9 > $WORKDIR/jun.lzma
 popd
-sudo $SCRIPT_DIR/mkboot $WORKDIR

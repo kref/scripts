@@ -1,5 +1,12 @@
-#!/bin/sh
-WORKDIR=$1
+#!/usr/bin/env bash
+# $1=model $2=version
+MODEL="$1"
+VER="$2"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}"   )" && pwd   )"
+ROOT=$(dirname ${SCRIPT_DIR})
+MV=${MODEL}_${VER}
+WORKDIR=$ROOT/$MV
+PAT=$ROOT/pat/$MV
 
 fallocate -l 50M $WORKDIR/synoboot.img
 sgdisk -o -n 0:0:+15M -t 1:EF00  -n 0:0:+30M -n 0:0: -t 3:EF02 -c 1:boot -c 2:image -c 3:legacy $WORKDIR/synoboot.img
@@ -25,11 +32,11 @@ rm -rf $WORKDIR/bl
 
 mkdir $WORKDIR/img
 mount -o noexec,nosuid,nodev "/dev/mapper/$part2" $WORKDIR/img
-cp $WORKDIR/rd.gz $WORKDIR/img/rd.gz
+cp $PAT/rd.gz $WORKDIR/img/rd.gz
 if [ -f $WORKDIR/bzImage ]; then
 	cp $WORKDIR/bzImage $WORKDIR/img/
 fi
-cp $WORKDIR/zImage $WORKDIR/img/
+cp $PAT/zImage $WORKDIR/img/
 if [ -f $WORKDIR/jun.lzma ]; then
 	cp $WORKDIR/jun.lzma $WORKDIR/img/extra.lzma
 fi

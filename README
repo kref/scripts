@@ -1,0 +1,18 @@
+This project attempts to improve DSM's compatibility without vendor cooperation
+
+How to generate bootable image:
+
+1. clone kernel source(FIXME), compatibility util source(FIXME) and build scripts to same folder
+
+2. extract and prepare pat
+scripts/prep ds3617 6.1 /path/to/DSM_DS3617xs_15047.pat /path/to/broadwell-gcc493_glibc220_linaro_x86_64-GPL.txz
+
+3. make necessary changes to ramdisk
+
+4. create config.override (extra kernel configs), grub.cfg, modules.conf(a list of extra modules), optionally info.txt
+
+5. build modules & generate ramdisk
+scripts/mkramdisk ds3617 6.1 broadwell
+
+6. generate bootable disk image
+sudo scripts/mkboot ds3617 6.1
